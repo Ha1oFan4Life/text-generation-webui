@@ -294,6 +294,8 @@ def do_train(lora_name: str, always_override: bool, q_proj_en: bool, v_proj_en: 
     )
 
     MODEL_CLASSES = {v[1]: v[0] for v in MODEL_FOR_CAUSAL_LM_MAPPING_NAMES.items()}
+    if 'MistralForCausalLM' not in MODEL_CLASSES:
+        MODEL_CLASSES['MistralForCausalLM'] = 'mistral'
 
     global WANT_INTERRUPT
     WANT_INTERRUPT = False
