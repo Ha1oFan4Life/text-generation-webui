@@ -3,6 +3,7 @@ bitsandbytes==0.45.*
 colorama
 datasets
 duckduckgo_search==8.0.2
+deep-translator
 einops
 fastapi==0.112.4
 gradio==4.37.*
