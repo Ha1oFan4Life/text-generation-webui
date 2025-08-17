@@ -8,12 +8,17 @@ import sys
 import threading
 import time
 from pathlib import Path
+import shutil
 
-import llama_cpp_binaries
 import requests
 
 from modules import shared
 from modules.logging_colors import logger
+
+try:
+    import llama_cpp_binaries
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
+    llama_cpp_binaries = None
 
 llamacpp_valid_cache_types = {"fp16", "q8_0", "q4_0"}
 
@@ -254,7 +259,17 @@ class LlamaServer:
         """Start the llama.cpp server and wait until it's ready."""
         # Determine the server path
         if self.server_path is None:
-            self.server_path = llama_cpp_binaries.get_binary_path()
+            if llama_cpp_binaries is not None:
+                self.server_path = llama_cpp_binaries.get_binary_path()
+            else:
+                # Try to locate the server binary in PATH
+                self.server_path = shutil.which("llama-server") or shutil.which("server")
+                if self.server_path is None:
+                    raise ModuleNotFoundError(
+                        "Could not find the llama.cpp server binary. "
+                        "Install 'llama_cpp_binaries', ensure 'llama-server' is on the PATH, "
+                        "or provide the binary path explicitly."
+                    )
 
         # Build the command
         cmd = [
