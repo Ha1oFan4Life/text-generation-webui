@@ -29,9 +29,12 @@ with RequestBlocker():
     from modules import gradio_hijack
     import gradio as gr
 
-import matplotlib
-
-matplotlib.use('Agg')  # This fixes LaTeX rendering on some systems
+try:
+    import matplotlib
+    matplotlib.use('Agg')  # This fixes LaTeX rendering on some systems
+except Exception as e:
+    matplotlib = None
+    logger.warning(f"Matplotlib unavailable: {e}")
 
 import json
 import os
