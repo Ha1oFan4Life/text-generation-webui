@@ -17,7 +17,7 @@ from modules.logging_colors import logger
 
 try:
     import llama_cpp_binaries
-except (ModuleNotFoundError, ImportError):  # pragma: no cover - optional dependency
+except ModuleNotFoundError:  # pragma: no cover - optional dependency
     llama_cpp_binaries = None
 
 llamacpp_valid_cache_types = {"fp16", "q8_0", "q4_0"}
@@ -265,7 +265,7 @@ class LlamaServer:
                 # Try to locate the server binary in PATH
                 self.server_path = shutil.which("llama-server") or shutil.which("server")
                 if self.server_path is None:
-                    raise FileNotFoundError(
+                    raise ModuleNotFoundError(
                         "Could not find the llama.cpp server binary. "
                         "Install 'llama_cpp_binaries', ensure 'llama-server' is on the PATH, "
                         "or provide the binary path explicitly."
