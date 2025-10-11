@@ -27,9 +27,7 @@ document.querySelector(".header_bar").addEventListener("click", function(event) 
     this.style.marginBottom = chatVisible ? "0px" : "19px";
 
     if (chatVisible && !showControlsChecked) {
-      document.querySelectorAll(
-        "#chat-tab > div > :nth-child(1), #chat-tab > div > :nth-child(3), #chat-tab > div > :nth-child(4), #extensions"
-      ).forEach(element => {
+      document.querySelectorAll("#extensions").forEach(element => {
         element.style.display = "none";
       });
     }
@@ -149,11 +147,15 @@ window.isScrolled = false;
 let scrollTimeout;
 
 targetElement.addEventListener("scroll", function() {
-  // Add scrolling class to disable hover effects
-  targetElement.classList.add("scrolling");
-
   let diff = targetElement.scrollHeight - targetElement.clientHeight;
-  if(Math.abs(targetElement.scrollTop - diff) <= 10 || diff == 0) {
+  let isAtBottomNow = Math.abs(targetElement.scrollTop - diff) <= 10 || diff == 0;
+
+  // Add scrolling class to disable hover effects
+  if (window.isScrolled || !isAtBottomNow) {
+    targetElement.classList.add("scrolling");
+  }
+
+  if(isAtBottomNow) {
     window.isScrolled = false;
   } else {
     window.isScrolled = true;
@@ -165,11 +167,17 @@ targetElement.addEventListener("scroll", function() {
     targetElement.classList.remove("scrolling");
     doSyntaxHighlighting(); // Only run after scrolling stops
   }, 150);
-
 });
 
 // Create a MutationObserver instance
 const observer = new MutationObserver(function(mutations) {
+  // Check if this is just the scrolling class being toggled
+  const isScrollingClassOnly = mutations.every(mutation =>
+    mutation.type === "attributes" &&
+    mutation.attributeName === "class" &&
+    mutation.target === targetElement
+  );
+
   if (targetElement.classList.contains("_generating")) {
     typing.parentNode.classList.add("visible-dots");
     document.getElementById("stop").style.display = "flex";
@@ -182,8 +190,11 @@ const observer = new MutationObserver(function(mutations) {
 
   doSyntaxHighlighting();
 
-  if (!window.isScrolled && targetElement.scrollTop !== targetElement.scrollHeight) {
-    targetElement.scrollTop = targetElement.scrollHeight;
+  if (!window.isScrolled && !isScrollingClassOnly) {
+    const maxScroll = targetElement.scrollHeight - targetElement.clientHeight;
+    if (maxScroll > 0 && targetElement.scrollTop < maxScroll - 1) {
+      targetElement.scrollTop = maxScroll;
+    }
   }
 
   const chatElement = document.getElementById("chat");
@@ -192,10 +203,17 @@ const observer = new MutationObserver(function(mutations) {
     const lastChild = messagesContainer?.lastElementChild;
     const prevSibling = lastChild?.previousElementSibling;
     if (lastChild && prevSibling) {
-      lastChild.style.setProperty("margin-bottom",
-        `max(0px, calc(max(70vh, 100vh - ${prevSibling.offsetHeight}px - 84px) - ${lastChild.offsetHeight}px))`,
-        "important"
-      );
+      // Add padding to the messages container to create room for the last message.
+      // The purpose of this is to avoid constant scrolling during streaming in
+      // instruct mode.
+      let bufferHeight = Math.max(0, Math.max(window.innerHeight - 128 - 84, window.innerHeight - prevSibling.offsetHeight - 84) - lastChild.offsetHeight);
+
+      // Subtract header height when screen width is <= 924px
+      if (window.innerWidth <= 924) {
+        bufferHeight = Math.max(0, bufferHeight - 32);
+      }
+
+      messagesContainer.style.paddingBottom = `${bufferHeight}px`;
     }
   }
 });
@@ -231,28 +249,46 @@ function doSyntaxHighlighting() {
   if (messageBodies.length > 0) {
     observer.disconnect();
 
-    messageBodies.forEach((messageBody) => {
-      if (isElementVisibleOnScreen(messageBody)) {
-        // Handle both code and math in a single pass through each message
-        const codeBlocks = messageBody.querySelectorAll("pre code:not([data-highlighted])");
-        codeBlocks.forEach((codeBlock) => {
-          hljs.highlightElement(codeBlock);
-          codeBlock.setAttribute("data-highlighted", "true");
-          codeBlock.classList.add("pretty_scrollbar");
-        });
+    try {
+      let hasSeenVisible = false;
 
-        renderMathInElement(messageBody, {
-          delimiters: [
-            { left: "$$", right: "$$", display: true },
-            { left: "$", right: "$", display: false },
-            { left: "\\(", right: "\\)", display: false },
-            { left: "\\[", right: "\\]", display: true },
-          ],
-        });
+      // Go from last message to first
+      for (let i = messageBodies.length - 1; i >= 0; i--) {
+        const messageBody = messageBodies[i];
+
+        if (isElementVisibleOnScreen(messageBody)) {
+          hasSeenVisible = true;
+
+          // Handle both code and math in a single pass through each message
+          const codeBlocks = messageBody.querySelectorAll("pre code:not([data-highlighted])");
+          codeBlocks.forEach((codeBlock) => {
+            hljs.highlightElement(codeBlock);
+            codeBlock.setAttribute("data-highlighted", "true");
+            codeBlock.classList.add("pretty_scrollbar");
+          });
+
+          // Only render math in visible elements
+          const mathContainers = messageBody.querySelectorAll("p, span, li, td, th, h1, h2, h3, h4, h5, h6, blockquote, figcaption, caption, dd, dt");
+          mathContainers.forEach(container => {
+            if (isElementVisibleOnScreen(container)) {
+              renderMathInElement(container, {
+                delimiters: [
+                  { left: "$$", right: "$$", display: true },
+                  { left: "\\(", right: "\\)", display: false },
+                  { left: "\\[", right: "\\]", display: true },
+                ],
+              });
+            }
+          });
+        } else if (hasSeenVisible) {
+        // We've seen visible messages but this one is not visible
+        // Since we're going from last to first, we can break
+          break;
+        }
       }
-    });
-
-    observer.observe(targetElement, config);
+    } finally {
+      observer.observe(targetElement, config);
+    }
   }
 }
 
@@ -560,7 +596,7 @@ function moveToChatTab() {
 
   const chatControlsFirstChild = document.querySelector("#chat-controls").firstElementChild;
   const newParent = chatControlsFirstChild;
-  let newPosition = newParent.children.length - 2;
+  let newPosition = newParent.children.length - 3;
 
   newParent.insertBefore(grandParent, newParent.children[newPosition]);
   document.getElementById("save-character").style.display = "none";
@@ -777,11 +813,43 @@ initializeSidebars();
 
 // Add click event listeners to toggle buttons
 pastChatsToggle.addEventListener("click", () => {
+  const isCurrentlyOpen = !pastChatsRow.classList.contains("sidebar-hidden");
   toggleSidebar(pastChatsRow, pastChatsToggle);
+
+  // On desktop, open/close both sidebars at the same time
+  if (!isMobile()) {
+    if (isCurrentlyOpen) {
+      // If we just closed the left sidebar, also close the right sidebar
+      if (!chatControlsRow.classList.contains("sidebar-hidden")) {
+        toggleSidebar(chatControlsRow, chatControlsToggle, true);
+      }
+    } else {
+      // If we just opened the left sidebar, also open the right sidebar
+      if (chatControlsRow.classList.contains("sidebar-hidden")) {
+        toggleSidebar(chatControlsRow, chatControlsToggle, false);
+      }
+    }
+  }
 });
 
 chatControlsToggle.addEventListener("click", () => {
+  const isCurrentlyOpen = !chatControlsRow.classList.contains("sidebar-hidden");
   toggleSidebar(chatControlsRow, chatControlsToggle);
+
+  // On desktop, open/close both sidebars at the same time
+  if (!isMobile()) {
+    if (isCurrentlyOpen) {
+      // If we just closed the right sidebar, also close the left sidebar
+      if (!pastChatsRow.classList.contains("sidebar-hidden")) {
+        toggleSidebar(pastChatsRow, pastChatsToggle, true);
+      }
+    } else {
+      // If we just opened the right sidebar, also open the left sidebar
+      if (pastChatsRow.classList.contains("sidebar-hidden")) {
+        toggleSidebar(pastChatsRow, pastChatsToggle, false);
+      }
+    }
+  }
 });
 
 navigationToggle.addEventListener("click", () => {
@@ -922,7 +990,7 @@ if (document.readyState === "loading") {
 //------------------------------------------------
 
 // File upload button
-document.querySelector("#chat-input .upload-button").title = "Upload text files, PDFs, and DOCX documents";
+document.querySelector("#chat-input .upload-button").title = "Upload text files, PDFs, DOCX documents, and images";
 
 // Activate web search
 document.getElementById("web-search").title = "Search the internet with DuckDuckGo";
@@ -996,3 +1064,44 @@ new MutationObserver(() => addMiniDeletes()).observe(
   {childList: true, subtree: true}
 );
 addMiniDeletes();
+
+//------------------------------------------------
+// Fix autoscroll after fonts load
+//------------------------------------------------
+document.fonts.addEventListener("loadingdone", (event) => {
+  setTimeout(() => {
+    if (!window.isScrolled) {
+      const maxScroll = targetElement.scrollHeight - targetElement.clientHeight;
+      if (targetElement.scrollTop < maxScroll - 5) {
+        targetElement.scrollTop = maxScroll;
+      }
+    }
+  }, 50);
+});
+
+(function() {
+  const chatParent = document.querySelector(".chat-parent");
+  const chatInputRow = document.querySelector("#chat-input-row");
+  const originalMarginBottom = 75;
+  let originalHeight = chatInputRow.offsetHeight;
+
+  function updateMargin() {
+    const currentHeight = chatInputRow.offsetHeight;
+    const heightDifference = currentHeight - originalHeight;
+    chatParent.style.marginBottom = `${originalMarginBottom + heightDifference}px`;
+  }
+
+  // Watch for changes that might affect height
+  const observer = new MutationObserver(updateMargin);
+  observer.observe(chatInputRow, {
+    childList: true,
+    subtree: true,
+    attributes: true
+  });
+
+  // Also listen for window resize
+  window.addEventListener("resize", updateMargin);
+
+  // Initial call to set the margin based on current state
+  updateMargin();
+})();

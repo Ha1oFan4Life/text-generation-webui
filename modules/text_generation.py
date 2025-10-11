@@ -40,7 +40,7 @@ def _generate_reply(question, state, stopping_strings=None, is_chat=False, escap
             yield ''
             return
 
-        if shared.model.__class__.__name__ in ['LlamaServer', 'Exllamav2Model', 'TensorRTLLMModel']:
+        if shared.model.__class__.__name__ in ['LlamaServer', 'Exllamav2Model', 'Exllamav3Model', 'TensorRTLLMModel']:
             generate_func = generate_reply_custom
         else:
             generate_func = generate_reply_HF
@@ -128,13 +128,12 @@ def encode(prompt, add_special_tokens=True, add_bos_token=True, truncation_lengt
 
         from modules.torch_utils import get_device
 
-        if shared.model.__class__.__name__ in ['Exllamav2Model', 'TensorRTLLMModel']:
+        if shared.model.__class__.__name__ in ['Exllamav2Model', 'Exllamav3Model', 'TensorRTLLMModel']:
             input_ids = shared.tokenizer.encode(str(prompt))
-            if shared.model.__class__.__name__ != 'Exllamav2Model':
+            if shared.model.__class__.__name__ not in ['Exllamav2Model', 'Exllamav3Model']:
                 input_ids = np.array(input_ids).reshape(1, len(input_ids))
         else:
             input_ids = shared.tokenizer.encode(str(prompt), return_tensors='pt', add_special_tokens=add_special_tokens)
-
             if hasattr(shared.tokenizer, 'bos_token_id') and shared.tokenizer.bos_token_id is not None:
                 if add_bos_token:
                     # Add BOS token if missing
@@ -142,18 +141,14 @@ def encode(prompt, add_special_tokens=True, add_bos_token=True, truncation_lengt
                         bos_tensor = torch.tensor([[shared.tokenizer.bos_token_id]])
                         input_ids = torch.cat((bos_tensor, input_ids), 1)
 
-                    # Prevent double BOS tokens from jinja templates
-                    while len(input_ids[0]) > 1 and input_ids[0][0] == shared.tokenizer.bos_token_id and input_ids[0][1] == shared.tokenizer.bos_token_id:
-                        input_ids = input_ids[:, 1:]
-                else:
-                    # Remove BOS tokens when not wanted
-                    while len(input_ids[0]) > 0 and input_ids[0][0] == shared.tokenizer.bos_token_id:
-                        input_ids = input_ids[:, 1:]
+                # Always prevent double BOS tokens (regardless of add_bos_token setting)
+                while len(input_ids[0]) > 1 and input_ids[0][0] == shared.tokenizer.bos_token_id and input_ids[0][1] == shared.tokenizer.bos_token_id:
+                    input_ids = input_ids[:, 1:]
 
         if truncation_length is not None:
             input_ids = input_ids[:, -truncation_length:]
 
-        if shared.model.__class__.__name__ in ['Exllamav2Model', 'TensorRTLLMModel'] or shared.args.cpu:
+        if shared.model.__class__.__name__ in ['Exllamav2Model', 'Exllamav3Model', 'TensorRTLLMModel'] or shared.args.cpu:
             return input_ids
         else:
             device = get_device()
@@ -498,8 +493,14 @@ def generate_reply_custom(question, original_question, state, stopping_strings=N
         traceback.print_exc()
     finally:
         t1 = time.time()
-        original_tokens = len(encode(original_question)[0])
-        new_tokens = len(encode(original_question + reply)[0]) - original_tokens
+
+        if hasattr(shared.model, 'last_prompt_token_count'):
+            original_tokens = shared.model.last_prompt_token_count
+            new_tokens = len(encode(reply)[0]) if reply else 0
+        else:
+            original_tokens = len(encode(original_question)[0])
+            new_tokens = len(encode(original_question + reply)[0]) - original_tokens
+
         logger.info(f'Output generated in {(t1-t0):.2f} seconds ({new_tokens/(t1-t0):.2f} tokens/s, {new_tokens} tokens, context {original_tokens}, seed {state["seed"]})')
         return
 

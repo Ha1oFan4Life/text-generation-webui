@@ -1,9 +1,15 @@
 import concurrent.futures
+import html
+import random
+import re
+import urllib.request
 from concurrent.futures import as_completed
 from datetime import datetime
+from urllib.parse import quote_plus
 
 import requests
 
+from modules import shared
 from modules.logging_colors import logger
 
 
@@ -28,6 +34,8 @@ def download_web_page(url, timeout=10):
         # Initialize the HTML to Markdown converter
         h = html2text.HTML2Text()
         h.body_width = 0
+        h.ignore_images = True
+        h.ignore_links = True
 
         # Convert the HTML to Markdown
         markdown_text = h.handle(response.text)
@@ -41,19 +49,31 @@ def download_web_page(url, timeout=10):
         return ""
 
 
-def perform_web_search(query, num_pages=3, max_workers=5):
+def perform_web_search(query, num_pages=3, max_workers=5, timeout=10):
     """Perform web search and return results with content"""
-    from duckduckgo_search import DDGS
-
     try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=num_pages))
+        search_url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
+
+        agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+        ]
+
+        response_text = ""
+        req = urllib.request.Request(search_url, headers={'User-Agent': random.choice(agents)})
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            response_text = response.read().decode('utf-8')
+
+        # Extract results with regex
+        titles = re.findall(r'<a[^>]*class="[^"]*result__a[^"]*"[^>]*>(.*?)</a>', response_text, re.DOTALL)
+        urls = re.findall(r'<a[^>]*class="[^"]*result__url[^"]*"[^>]*>(.*?)</a>', response_text, re.DOTALL)
 
         # Prepare download tasks
         download_tasks = []
-        for i, result in enumerate(results):
-            url = result.get('href', '')
-            title = result.get('title', f'Search Result {i+1}')
+        for i in range(min(len(titles), len(urls), num_pages)):
+            url = f"https://{urls[i].strip()}"
+            title = re.sub(r'<[^>]+>', '', titles[i]).strip()
+            title = html.unescape(title)
             download_tasks.append((url, title, i))
 
         search_results = [None] * len(download_tasks)  # Pre-allocate to maintain order
@@ -88,6 +108,22 @@ def perform_web_search(query, num_pages=3, max_workers=5):
     except Exception as e:
         logger.error(f"Error performing web search: {e}")
         return []
+
+
+def truncate_content_by_tokens(content, max_tokens=8192):
+    """Truncate content to fit within token limit using binary search"""
+    if len(shared.tokenizer.encode(content)) <= max_tokens:
+        return content
+
+    left, right = 0, len(content)
+    while left < right:
+        mid = (left + right + 1) // 2
+        if len(shared.tokenizer.encode(content[:mid])) <= max_tokens:
+            left = mid
+        else:
+            right = mid - 1
+
+    return content[:left]
 
 
 def add_web_search_attachments(history, row_idx, user_message, search_query, state):
@@ -126,7 +162,7 @@ def add_web_search_attachments(history, row_idx, user_message, search_query, sta
                 "name": result['title'],
                 "type": "text/html",
                 "url": result['url'],
-                "content": result['content']
+                "content": truncate_content_by_tokens(result['content'])
             }
             history['metadata'][key]["attachments"].append(attachment)
 

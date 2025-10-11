@@ -6,6 +6,7 @@ import gradio as gr
 import yaml
 
 import extensions
+import modules.extensions as extensions_module
 from modules import shared
 from modules.chat import load_history
 from modules.utils import gradio
@@ -68,9 +69,9 @@ if not shared.args.old_colors:
         border_color_primary='#c5c5d2',
         body_text_color_subdued='#484848',
         background_fill_secondary='#eaeaea',
-        background_fill_secondary_dark='var(--selected-item-color-dark)',
+        background_fill_secondary_dark='var(--selected-item-color-dark, #282930)',
         background_fill_primary='var(--neutral-50)',
-        background_fill_primary_dark='var(--darker-gray)',
+        background_fill_primary_dark='var(--darker-gray, #1C1C1D)',
         body_background_fill="white",
         block_background_fill="transparent",
         body_text_color='rgb(64, 64, 64)',
@@ -80,25 +81,25 @@ if not shared.args.old_colors:
         button_shadow_hover="none",
 
         # Dark Mode Colors
-        input_background_fill_dark='var(--darker-gray)',
-        checkbox_background_color_dark='var(--darker-gray)',
+        input_background_fill_dark='var(--darker-gray, #1C1C1D)',
+        checkbox_background_color_dark='var(--darker-gray, #1C1C1D)',
         block_background_fill_dark='transparent',
         block_border_color_dark='transparent',
-        input_border_color_dark='var(--border-color-dark)',
-        input_border_color_focus_dark='var(--border-color-dark)',
-        checkbox_border_color_dark='var(--border-color-dark)',
-        border_color_primary_dark='var(--border-color-dark)',
-        button_secondary_border_color_dark='var(--border-color-dark)',
-        body_background_fill_dark='var(--dark-gray)',
+        input_border_color_dark='var(--border-color-dark, #525252)',
+        input_border_color_focus_dark='var(--border-color-dark, #525252)',
+        checkbox_border_color_dark='var(--border-color-dark, #525252)',
+        border_color_primary_dark='var(--border-color-dark, #525252)',
+        button_secondary_border_color_dark='var(--border-color-dark, #525252)',
+        body_background_fill_dark='var(--dark-gray, #212125)',
         button_primary_background_fill_dark='transparent',
         button_secondary_background_fill_dark='transparent',
         checkbox_label_background_fill_dark='transparent',
         button_cancel_background_fill_dark='transparent',
-        button_secondary_background_fill_hover_dark='var(--selected-item-color-dark)',
-        checkbox_label_background_fill_hover_dark='var(--selected-item-color-dark)',
-        table_even_background_fill_dark='var(--darker-gray)',
-        table_odd_background_fill_dark='var(--selected-item-color-dark)',
-        code_background_fill_dark='var(--darker-gray)',
+        button_secondary_background_fill_hover_dark='var(--selected-item-color-dark, #282930)',
+        checkbox_label_background_fill_hover_dark='var(--selected-item-color-dark, #282930)',
+        table_even_background_fill_dark='var(--darker-gray, #1C1C1D)',
+        table_odd_background_fill_dark='var(--selected-item-color-dark, #282930)',
+        code_background_fill_dark='var(--darker-gray, #1C1C1D)',
 
         # Shadows and Radius
         checkbox_label_shadow='none',
@@ -141,9 +142,7 @@ def list_model_elements():
         'num_experts_per_token',
         'load_in_8bit',
         'load_in_4bit',
-        'torch_compile',
-        'flash_attn',
-        'use_flash_attention_2',
+        'attn_implementation',
         'cpu',
         'disk',
         'row_split',
@@ -152,10 +151,10 @@ def list_model_elements():
         'mlock',
         'numa',
         'use_double_quant',
-        'use_eager_attention',
         'bf16',
         'autosplit',
         'enable_tp',
+        'tp_backend',
         'no_flash_attn',
         'no_xformers',
         'no_sdpa',
@@ -168,6 +167,7 @@ def list_model_elements():
         'gpu_layers_draft',
         'device_draft',
         'ctx_size_draft',
+        'mmproj',
     ]
 
     return elements
@@ -216,6 +216,7 @@ def list_interface_input_elements():
         'ban_eos_token',
         'add_bos_token',
         'enable_thinking',
+        'reasoning_effort',
         'skip_special_tokens',
         'stream',
         'static_cache',
@@ -273,7 +274,9 @@ def list_interface_input_elements():
 
     # Other elements
     elements += [
-        'paste_to_attachment'
+        'show_two_notebook_columns',
+        'paste_to_attachment',
+        'include_past_attachments',
     ]
 
     return elements
@@ -293,7 +296,7 @@ def gather_interface_values(*args):
         shared.persistent_interface_state.pop('textbox')
 
     # Prevent history loss if backend is restarted but UI is not refreshed
-    if output['history'] is None and output['unique_id'] is not None:
+    if (output['history'] is None or (len(output['history'].get('visible', [])) == 0 and len(output['history'].get('internal', [])) == 0)) and output['unique_id'] is not None:
         output['history'] = load_history(output['unique_id'], output['character_menu'], output['mode'])
 
     return output
@@ -324,8 +327,7 @@ def save_settings(state, preset, extensions_list, show_controls, theme_state, ma
             output[k] = state[k]
 
     output['preset'] = preset
-    output['prompt-default'] = state['prompt_menu-default']
-    output['prompt-notebook'] = state['prompt_menu-notebook']
+    output['prompt-notebook'] = state['prompt_menu-default'] if state['show_two_notebook_columns'] else state['prompt_menu-notebook']
     output['character'] = state['character_menu']
     output['seed'] = int(output['seed'])
     output['show_controls'] = show_controls
@@ -333,34 +335,40 @@ def save_settings(state, preset, extensions_list, show_controls, theme_state, ma
     output.pop('instruction_template_str')
     output.pop('truncation_length')
 
-    # Only save extensions on manual save
+    # Handle extensions and extension parameters
     if manual_save:
+        # Save current extensions and their parameter values
         output['default_extensions'] = extensions_list
+
+        for extension_name in extensions_list:
+            extension = getattr(extensions, extension_name, None)
+            if extension:
+                extension = extension.script
+                if hasattr(extension, 'params'):
+                    params = getattr(extension, 'params')
+                    for param in params:
+                        _id = f"{extension_name}-{param}"
+                        # Only save if different from default value
+                        if param not in shared.default_settings or params[param] != shared.default_settings[param]:
+                            output[_id] = params[param]
     else:
-        # Preserve existing extensions from settings file during autosave
+        # Preserve existing extensions and extension parameters during autosave
         settings_path = Path('user_data') / 'settings.yaml'
         if settings_path.exists():
             try:
                 with open(settings_path, 'r', encoding='utf-8') as f:
                     existing_settings = yaml.safe_load(f.read()) or {}
 
+                # Preserve default_extensions
                 if 'default_extensions' in existing_settings:
                     output['default_extensions'] = existing_settings['default_extensions']
+
+                # Preserve extension parameter values
+                for key, value in existing_settings.items():
+                    if any(key.startswith(f"{ext_name}-") for ext_name in extensions_module.available_extensions):
+                        output[key] = value
             except Exception:
                 pass  # If we can't read the file, just don't modify extensions
-
-    # Save extension values in the UI
-    for extension_name in extensions_list:
-        extension = getattr(extensions, extension_name, None)
-        if extension:
-            extension = extension.script
-            if hasattr(extension, 'params'):
-                params = getattr(extension, 'params')
-                for param in params:
-                    _id = f"{extension_name}-{param}"
-                    # Only save if different from default value
-                    if param not in shared.default_settings or params[param] != shared.default_settings[param]:
-                        output[_id] = params[param]
 
     # Do not save unchanged settings
     for key in list(output.keys()):
@@ -476,6 +484,7 @@ def setup_auto_save():
         'ban_eos_token',
         'add_bos_token',
         'enable_thinking',
+        'reasoning_effort',
         'skip_special_tokens',
         'stream',
         'static_cache',
@@ -497,7 +506,9 @@ def setup_auto_save():
         # Session tab (ui_session.py)
         'show_controls',
         'theme_state',
-        'paste_to_attachment'
+        'show_two_notebook_columns',
+        'paste_to_attachment',
+        'include_past_attachments'
     ]
 
     for element_name in change_elements:

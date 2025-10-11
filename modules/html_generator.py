@@ -116,29 +116,84 @@ def extract_thinking_block(string):
     THINK_START_TAG = "&lt;think&gt;"
     THINK_END_TAG = "&lt;/think&gt;"
 
-    # Look for opening tag
-    start_pos = string.lstrip().find(THINK_START_TAG)
-    if start_pos == -1:
-        return None, string
-
-    # Adjust start position to account for any leading whitespace
+    # Look for think tag first
     start_pos = string.find(THINK_START_TAG)
+    end_pos = string.find(THINK_END_TAG)
 
-    # Find the content after the opening tag
-    content_start = start_pos + len(THINK_START_TAG)
-
-    # Look for closing tag
-    end_pos = string.find(THINK_END_TAG, content_start)
-
-    if end_pos != -1:
-        # Both tags found - extract content between them
-        thinking_content = string[content_start:end_pos]
-        remaining_content = string[end_pos + len(THINK_END_TAG):]
+    # If think tags found, use existing logic
+    if start_pos != -1 or end_pos != -1:
+        # handle missing start or end tags
+        if start_pos == -1:
+            thought_start = 0
+        else:
+            thought_start = start_pos + len(THINK_START_TAG)
+        if end_pos == -1:
+            thought_end = len(string)
+            content_start = len(string)
+        else:
+            thought_end = end_pos
+            content_start = end_pos + len(THINK_END_TAG)
+        thinking_content = string[thought_start:thought_end]
+        remaining_content = string[content_start:]
         return thinking_content, remaining_content
-    else:
-        # Only opening tag found - everything else is thinking content
-        thinking_content = string[content_start:]
-        return thinking_content, ""
+
+    # If think tags not found, try GPT-OSS alternative format
+    ALT_START = "&lt;|channel|&gt;analysis&lt;|message|&gt;"
+    ALT_END = "&lt;|end|&gt;"
+    ALT_CONTENT_START = "&lt;|start|&gt;assistant&lt;|channel|&gt;final&lt;|message|&gt;"
+
+    alt_start_pos = string.find(ALT_START)
+    alt_end_pos = string.find(ALT_END)
+    alt_content_pos = string.find(ALT_CONTENT_START)
+
+    if alt_start_pos != -1 or alt_end_pos != -1:
+        if alt_start_pos == -1:
+            thought_start = 0
+        else:
+            thought_start = alt_start_pos + len(ALT_START)
+
+        # If no explicit end tag but content start exists, use content start as end
+        if alt_end_pos == -1:
+            if alt_content_pos != -1:
+                thought_end = alt_content_pos
+                content_start = alt_content_pos + len(ALT_CONTENT_START)
+            else:
+                thought_end = len(string)
+                content_start = len(string)
+        else:
+            thought_end = alt_end_pos
+            content_start = alt_content_pos + len(ALT_CONTENT_START) if alt_content_pos != -1 else alt_end_pos + len(ALT_END)
+
+        thinking_content = string[thought_start:thought_end]
+        remaining_content = string[content_start:]
+        return thinking_content, remaining_content
+
+    # Try seed:think format
+    SEED_START = "&lt;seed:think&gt;"
+    SEED_END = "&lt;/seed:think&gt;"
+
+    seed_start_pos = string.find(SEED_START)
+    seed_end_pos = string.find(SEED_END)
+
+    if seed_start_pos != -1 or seed_end_pos != -1:
+        if seed_start_pos == -1:
+            thought_start = 0
+        else:
+            thought_start = seed_start_pos + len(SEED_START)
+
+        if seed_end_pos == -1:
+            thought_end = len(string)
+            content_start = len(string)
+        else:
+            thought_end = seed_end_pos
+            content_start = seed_end_pos + len(SEED_END)
+
+        thinking_content = string[thought_start:thought_end]
+        remaining_content = string[content_start:]
+        return thinking_content, remaining_content
+
+    # Return if no format is found
+    return None, string
 
 
 @functools.lru_cache(maxsize=None)
@@ -188,6 +243,27 @@ def process_markdown_content(string):
     if not string:
         return ""
 
+    # Define a unique placeholder for LaTeX asterisks
+    LATEX_ASTERISK_PLACEHOLDER = "LATEXASTERISKPLACEHOLDER"
+
+    def protect_asterisks_in_latex(match):
+        """A replacer function for re.sub to protect asterisks in multiple LaTeX formats."""
+        # Check which delimiter group was captured
+        if match.group(1) is not None:  # Content from $$...$$
+            content = match.group(1)
+            modified_content = content.replace('*', LATEX_ASTERISK_PLACEHOLDER)
+            return f'$${modified_content}$$'
+        elif match.group(2) is not None:  # Content from \[...\]
+            content = match.group(2)
+            modified_content = content.replace('*', LATEX_ASTERISK_PLACEHOLDER)
+            return f'\\[{modified_content}\\]'
+        elif match.group(3) is not None:  # Content from \(...\)
+            content = match.group(3)
+            modified_content = content.replace('*', LATEX_ASTERISK_PLACEHOLDER)
+            return f'\\({modified_content}\\)'
+
+        return match.group(0)  # Fallback
+
     # Make \[ \]  LaTeX equations inline
     pattern = r'^\s*\\\[\s*\n([\s\S]*?)\n\s*\\\]\s*$'
     replacement = r'\\[ \1 \\]'
@@ -216,6 +292,10 @@ def process_markdown_content(string):
     string = string.replace('\\begin{equation*}', '$$')
     string = string.replace('\\end{equation*}', '$$')
     string = re.sub(r"(.)```", r"\1\n```", string)
+
+    # Protect asterisks within all LaTeX blocks before markdown conversion
+    latex_pattern = re.compile(r'\$\$(.*?)\$\$|\\\[(.*?)\\\]|\\\((.*?)\\\)', re.DOTALL)
+    string = latex_pattern.sub(protect_asterisks_in_latex, string)
 
     result = ''
     is_code = False
@@ -274,6 +354,12 @@ def process_markdown_content(string):
     else:
         # Convert to HTML using markdown
         html_output = markdown.markdown(result, extensions=['fenced_code', 'tables', SaneListExtension()])
+
+    # Restore the LaTeX asterisks after markdown conversion
+    html_output = html_output.replace(LATEX_ASTERISK_PLACEHOLDER, '*')
+
+    # Remove extra newlines before </code>
+    html_output = re.sub(r'\s*</code>', '</code>', html_output)
 
     # Unescape code blocks
     pattern = re.compile(r'<code[^>]*>(.*?)</code>', re.DOTALL)
@@ -375,16 +461,26 @@ def format_message_attachments(history, role, index):
         for attachment in attachments:
             name = html.escape(attachment["name"])
 
-            # Make clickable if URL exists
-            if "url" in attachment:
-                name = f'<a href="{html.escape(attachment["url"])}" target="_blank" rel="noopener noreferrer">{name}</a>'
+            if attachment.get("type") == "image":
+                image_data = attachment.get("image_data", "")
+                attachments_html += (
+                    f'<div class="attachment-box image-attachment">'
+                    f'<img src="{image_data}" alt="{name}" class="image-preview" />'
+                    f'<div class="attachment-name">{name}</div>'
+                    f'</div>'
+                )
+            else:
+                # Make clickable if URL exists (web search)
+                if "url" in attachment:
+                    name = f'<a href="{html.escape(attachment["url"])}" target="_blank" rel="noopener noreferrer">{name}</a>'
 
-            attachments_html += (
-                f'<div class="attachment-box">'
-                f'<div class="attachment-icon">{attachment_svg}</div>'
-                f'<div class="attachment-name">{name}</div>'
-                f'</div>'
-            )
+                attachments_html += (
+                    f'<div class="attachment-box">'
+                    f'<div class="attachment-icon">{attachment_svg}</div>'
+                    f'<div class="attachment-name">{name}</div>'
+                    f'</div>'
+                )
+
         attachments_html += '</div>'
         return attachments_html
 
@@ -595,64 +691,6 @@ def generate_cai_chat_html(history, name1, name2, style, character, reset_cache=
     return output
 
 
-def generate_chat_html(history, name1, name2, reset_cache=False, last_message_only=False):
-    if not last_message_only:
-        output = f'<style>{chat_styles["wpp"]}</style><div class="chat" id="chat"><div class="messages">'
-    else:
-        output = ""
-
-    def create_message(role, content, raw_content):
-        """Inner function for WPP-style messages."""
-        text_class = "text-you" if role == "user" else "text-bot"
-
-        # Get role-specific data
-        timestamp = format_message_timestamp(history, role, i)
-        attachments = format_message_attachments(history, role, i)
-
-        # Create info button if timestamp exists
-        info_message = ""
-        if timestamp:
-            tooltip_text = get_message_tooltip(history, role, i)
-            info_message = info_button.replace('title="message"', f'title="{html.escape(tooltip_text)}"')
-
-        return (
-            f'<div class="message" '
-            f'data-raw="{html.escape(raw_content, quote=True)}"'
-            f'data-index={i}>'
-            f'<div class="{text_class}">'
-            f'<div class="message-body">{content}</div>'
-            f'{attachments}'
-            f'{actions_html(history, i, role, info_message)}'
-            f'</div>'
-            f'</div>'
-        )
-
-    # Determine range
-    start_idx = len(history['visible']) - 1 if last_message_only else 0
-    end_idx = len(history['visible'])
-
-    for i in range(start_idx, end_idx):
-        row_visible = history['visible'][i]
-        row_internal = history['internal'][i]
-
-        # Convert content
-        if last_message_only:
-            converted_visible = [None, convert_to_markdown_wrapped(row_visible[1], message_id=i, use_cache=i != len(history['visible']) - 1)]
-        else:
-            converted_visible = [convert_to_markdown_wrapped(entry, message_id=i, use_cache=i != len(history['visible']) - 1) for entry in row_visible]
-
-        # Generate messages
-        if not last_message_only and converted_visible[0]:
-            output += create_message("user", converted_visible[0], row_internal[0])
-
-        output += create_message("assistant", converted_visible[1], row_internal[1])
-
-    if not last_message_only:
-        output += "</div></div>"
-
-    return output
-
-
 def time_greeting():
     current_hour = datetime.datetime.now().hour
     if 5 <= current_hour < 12:
@@ -669,8 +707,6 @@ def chat_html_wrapper(history, name1, name2, mode, style, character, reset_cache
         result = f'<div class="chat" id="chat">{greeting}</div>'
     elif mode == 'instruct':
         result = generate_instruct_html(history, last_message_only=last_message_only)
-    elif style == 'wpp':
-        result = generate_chat_html(history, name1, name2, last_message_only=last_message_only)
     else:
         result = generate_cai_chat_html(history, name1, name2, style, character, reset_cache=reset_cache, last_message_only=last_message_only)
 

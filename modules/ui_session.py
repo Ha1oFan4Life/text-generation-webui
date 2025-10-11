@@ -11,11 +11,13 @@ def create_ui():
             with gr.Column():
                 gr.Markdown("## Settings")
                 shared.gradio['toggle_dark_mode'] = gr.Button('Toggle light/dark theme 💡', elem_classes='refresh-button')
+                shared.gradio['show_two_notebook_columns'] = gr.Checkbox(label='Show two columns in the Notebook tab', value=shared.settings['show_two_notebook_columns'])
                 shared.gradio['paste_to_attachment'] = gr.Checkbox(label='Turn long pasted text into attachments in the Chat tab', value=shared.settings['paste_to_attachment'], elem_id='paste_to_attachment')
+                shared.gradio['include_past_attachments'] = gr.Checkbox(label='Include attachments/search results from previous messages in the chat prompt', value=shared.settings['include_past_attachments'])
 
             with gr.Column():
                 gr.Markdown("## Extensions & flags")
-                shared.gradio['save_settings'] = gr.Button('Save settings to user_data/settings.yaml', elem_classes='refresh-button', interactive=not mu)
+                shared.gradio['save_settings'] = gr.Button('Save extensions settings to user_data/settings.yaml', elem_classes='refresh-button', interactive=not mu)
                 shared.gradio['reset_interface'] = gr.Button("Apply flags/extensions and restart", interactive=not mu)
                 with gr.Row():
                     with gr.Column():
@@ -25,18 +27,26 @@ def create_ui():
                         shared.gradio['bool_menu'] = gr.CheckboxGroup(choices=get_boolean_arguments(), value=get_boolean_arguments(active=True), label="Boolean command-line flags", elem_classes='checkboxgroup-table')
 
         shared.gradio['theme_state'] = gr.Textbox(visible=False, value='dark' if shared.settings['dark_theme'] else 'light')
-        shared.gradio['save_settings'].click(
-            ui.gather_interface_values, gradio(shared.input_elements), gradio('interface_state')).then(
-            handle_save_settings, gradio('interface_state', 'preset_menu', 'extensions_menu', 'show_controls', 'theme_state'), gradio('save_contents', 'save_filename', 'save_root', 'file_saver'), show_progress=False)
+        if not mu:
+            shared.gradio['save_settings'].click(
+                ui.gather_interface_values, gradio(shared.input_elements), gradio('interface_state')).then(
+                handle_save_settings, gradio('interface_state', 'preset_menu', 'extensions_menu', 'show_controls', 'theme_state'), gradio('save_contents', 'save_filename', 'save_root', 'file_saver'), show_progress=False)
 
         shared.gradio['toggle_dark_mode'].click(
             lambda x: 'dark' if x == 'light' else 'light', gradio('theme_state'), gradio('theme_state')).then(
             None, None, None, js=f'() => {{{ui.dark_theme_js}; toggleDarkMode(); localStorage.setItem("theme", document.body.classList.contains("dark") ? "dark" : "light")}}')
 
+        shared.gradio['show_two_notebook_columns'].change(
+            handle_default_to_notebook_change,
+            gradio('show_two_notebook_columns', 'textbox-default', 'output_textbox', 'prompt_menu-default', 'textbox-notebook', 'prompt_menu-notebook'),
+            gradio('default-tab', 'notebook-tab', 'textbox-default', 'output_textbox', 'prompt_menu-default', 'textbox-notebook', 'prompt_menu-notebook')
+        )
+
         # Reset interface event
-        shared.gradio['reset_interface'].click(
-            set_interface_arguments, gradio('extensions_menu', 'bool_menu'), None).then(
-            None, None, None, js='() => {document.body.innerHTML=\'<h1 style="font-family:monospace;padding-top:20%;margin:0;height:100vh;color:lightgray;text-align:center;background:var(--body-background-fill)">Reloading...</h1>\'; setTimeout(function(){location.reload()},2500); return []}')
+        if not mu:
+            shared.gradio['reset_interface'].click(
+                set_interface_arguments, gradio('extensions_menu', 'bool_menu'), None).then(
+                None, None, None, js='() => {document.body.innerHTML=\'<h1 style="font-family:monospace;padding-top:20%;margin:0;height:100vh;color:lightgray;text-align:center;background:var(--body-background-fill)">Reloading...</h1>\'; setTimeout(function(){location.reload()},2500); return []}')
 
 
 def handle_save_settings(state, preset, extensions, show_controls, theme):
@@ -47,6 +57,31 @@ def handle_save_settings(state, preset, extensions, show_controls, theme):
         "user_data/",
         gr.update(visible=True)
     ]
+
+
+def handle_default_to_notebook_change(show_two_columns, default_input, default_output, default_prompt, notebook_input, notebook_prompt):
+    if show_two_columns:
+        # Notebook to default
+        return [
+            gr.update(visible=True),
+            gr.update(visible=False),
+            notebook_input,
+            "",
+            gr.update(value=notebook_prompt, choices=utils.get_available_prompts()),
+            gr.update(),
+            gr.update(),
+        ]
+    else:
+        # Default to notebook
+        return [
+            gr.update(visible=False),
+            gr.update(visible=True),
+            gr.update(),
+            gr.update(),
+            gr.update(),
+            default_input,
+            gr.update(value=default_prompt, choices=utils.get_available_prompts())
+        ]
 
 
 def set_interface_arguments(extensions, bool_active):

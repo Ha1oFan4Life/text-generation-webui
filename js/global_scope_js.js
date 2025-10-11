@@ -351,3 +351,39 @@ function handleMorphdomUpdate(data) {
     }
   });
 }
+
+// Wait for Gradio to finish setting its styles, then force dark theme
+const observer = new MutationObserver((mutations) => {
+  mutations.forEach((mutation) => {
+    if (mutation.type === "attributes" &&
+        mutation.target.tagName === "GRADIO-APP" &&
+        mutation.attributeName === "style") {
+
+      // Gradio just set its styles, now force dark theme
+      document.body.classList.add("dark");
+      observer.disconnect();
+    }
+  });
+});
+
+// Start observing
+observer.observe(document.documentElement, {
+  attributes: true,
+  subtree: true,
+  attributeFilter: ["style"]
+});
+
+//------------------------------------------------
+// Suppress "Attempted to select a non-interactive or hidden tab" warning
+//------------------------------------------------
+(function() {
+  const originalWarn = console.warn;
+
+  console.warn = function(...args) {
+    if (args[0] && typeof args[0] === "string" && args[0].includes("Attempted to select a non-interactive or hidden tab")) {
+      return;
+    }
+
+    originalWarn.apply(console, args);
+  };
+})();

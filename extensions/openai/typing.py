@@ -2,7 +2,7 @@ import json
 import time
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, model_validator, validator
 
 
 class GenerationOptions(BaseModel):
@@ -43,6 +43,7 @@ class GenerationOptions(BaseModel):
     ban_eos_token: bool = False
     add_bos_token: bool = True
     enable_thinking: bool = True
+    reasoning_effort: str = "medium"
     skip_special_tokens: bool = True
     static_cache: bool = False
     truncation_length: int = 0
@@ -98,13 +99,14 @@ class ToolCall(BaseModel):
 
 class CompletionRequestParams(BaseModel):
     model: str | None = Field(default=None, description="Unused parameter. To change the model, use the /v1/internal/model/load endpoint.")
-    prompt: str | List[str]
+    prompt: str | List[str] | None = Field(default=None, description="Text prompt for completion. Can also use 'messages' format for multimodal.")
+    messages: List[dict] | None = Field(default=None, description="OpenAI messages format for multimodal support. Alternative to 'prompt'.")
     best_of: int | None = Field(default=1, description="Unused parameter.")
     echo: bool | None = False
     frequency_penalty: float | None = 0
     logit_bias: dict | None = None
     logprobs: int | None = None
-    max_tokens: int | None = 16
+    max_tokens: int | None = 512
     n: int | None = Field(default=1, description="Unused parameter.")
     presence_penalty: float | None = 0
     stop: str | List[str] | None = None
@@ -113,6 +115,12 @@ class CompletionRequestParams(BaseModel):
     temperature: float | None = 1
     top_p: float | None = 1
     user: str | None = Field(default=None, description="Unused parameter.")
+
+    @model_validator(mode='after')
+    def validate_prompt_or_messages(self):
+        if self.prompt is None and self.messages is None:
+            raise ValueError("Either 'prompt' or 'messages' must be provided")
+        return self
 
 
 class CompletionRequest(GenerationOptions, CompletionRequestParams):
@@ -158,7 +166,7 @@ class ChatCompletionRequestParams(BaseModel):
     user_bio: str | None = Field(default=None, description="The user description/personality.")
     chat_template_str: str | None = Field(default=None, description="Jinja2 template for chat.")
 
-    chat_instruct_command: str | None = None
+    chat_instruct_command: str | None = "Continue the chat dialogue below. Write a single reply for the character \"<|character|>\".\n\n<|prompt|>"
 
     continue_: bool = Field(default=False, description="Makes the last bot message in the history be continued instead of starting a new message.")
 
@@ -219,7 +227,7 @@ class LogitsRequestParams(BaseModel):
     use_samplers: bool = False
     top_logits: int | None = 50
     frequency_penalty: float | None = 0
-    max_tokens: int | None = 16
+    max_tokens: int | None = 512
     presence_penalty: float | None = 0
     temperature: float | None = 1
     top_p: float | None = 1
