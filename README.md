@@ -79,6 +79,29 @@ python server.py --portable --api --auto-launch
 deactivate
 ```
 
+### Launching the web UI
+
+Regardless of the installation path you choose, the process for starting the
+interface is very similar:
+
+1. **Decide how you installed the project.**
+   - If you used the *portable builds* release zip, just double-click the
+     `start_*.bat` / `start_*.sh` script that matches your platform.
+   - If you used the *one-click installer*, rerun the same `start_windows.bat`,
+     `start_linux.sh`, or `start_macos.sh` script that you initially executed.
+   - If you set up a virtual environment manually, activate it and run
+     `python server.py` (pass any extra flags you need, e.g. `--api`).
+2. **Wait for the console to print `Running on local URL:  http://127.0.0.1:7860`.**
+   The server downloads missing models or extensions the first time it runs, so
+   the initial startup can take a few minutes.
+3. **Open the printed URL in your browser.** By default that is
+   `http://127.0.0.1:7860`, but you can change it with `--listen-host` and
+   `--listen-port` flags if you need to access the UI from another machine.
+
+To stop the server, press `Ctrl+C` in the terminal window that launched it. The
+next time you start it, the UI will reuse any models you have already
+downloaded inside the `user_data` directory.
+
 #### Option 3: One-click installer
 
 For users who need additional backends (ExLlamaV3, Transformers) or extensions (TTS, voice input, translation, etc). Requires ~10GB disk space and downloads PyTorch.
