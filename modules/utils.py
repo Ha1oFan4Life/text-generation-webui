@@ -121,6 +121,18 @@ def get_available_models():
 
     model_dir = Path(shared.args.model_dir)
 
+    try:
+        model_dir_entries = list(model_dir.iterdir())
+    except FileNotFoundError:
+        logger.warning(f'Model directory "{model_dir}" does not exist.')
+        return filtered_gguf_files
+    except NotADirectoryError:
+        logger.error(f'Model directory path "{model_dir}" is not a directory.')
+        return filtered_gguf_files
+    except PermissionError as exc:
+        logger.error(f'Unable to access model directory "{model_dir}": {exc}')
+        return filtered_gguf_files
+
     # Find top-level directories containing GGUF files
     dirs_with_gguf = set()
     for gguf_path in gguf_files:
@@ -130,18 +142,23 @@ def get_available_models():
 
     # Find directories with safetensors files
     dirs_with_safetensors = set()
-    for item in os.listdir(model_dir):
-        item_path = model_dir / item
-        if item_path.is_dir():
-            if any(file.lower().endswith(('.safetensors', '.pt')) for file in os.listdir(item_path) if (item_path / file).is_file()):
-                dirs_with_safetensors.add(item)
+    for item_path in model_dir_entries:
+        if not item_path.is_dir():
+            continue
+
+        try:
+            if any(child.is_file() and child.suffix.lower() in ('.safetensors', '.pt') for child in item_path.iterdir()):
+                dirs_with_safetensors.add(item_path.name)
+        except OSError as exc:
+            logger.warning(f'Skipping directory "{item_path}" due to access error: {exc}')
 
     # Find valid model directories
     model_dirs = []
-    for item in os.listdir(model_dir):
-        item_path = model_dir / item
+    for item_path in model_dir_entries:
         if not item_path.is_dir():
             continue
+
+        item = item_path.name
 
         # Include directory if it either doesn't contain GGUF files
         # or contains both GGUF and safetensors files
